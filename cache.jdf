@@ -7,14 +7,7 @@ extern "C" %{
  */
 
 #include "parsec.h" 
-#include <math.h>
-#include <unistd.h>
-#include<stdlib.h>
-#include<string.h>
-#include "parsec/data_dist/matrix/matrix.h"
-#include "cblas.h"
-//#include "mkl.h"
-#include "bal_data.h"
+#include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
 
 #define MY_TYPE parsec_datatype_double_t
 
@@ -26,162 +19,42 @@ extern "C" %{
  */
 
 
-dcA      [type = "parsec_tiled_matrix_dc_t*"]
-dcB      [type = "parsec_tiled_matrix_dc_t*"]
-NB       [type = int]
-NT       [type = int]
-LEVEL    [type = int]
+Block      [type = "parsec_data_collection_t*"]
+block_size [type = int]  
+N          [type = int]         
 
-Start(k)
+Task(k)
 
-k = 0..NT-1
+k = 0..N
 
-:dcA(k, 0)
+:Block(0, 0)
 
-RW  A <-  dcA(k,0)
-      ->  (k == 0) ? A TaskNode0( 1..192, 1) : A TaskNode1( 1..192, 1) [ type= DEFAULT layout= MY_TYPE count= NB ]
-RW  B <-  dcB(k,0)
-      ->  (k == 0) ? B TaskNode0( 1..192, 1) : B TaskNode1( 1..192, 1) [ type= DEFAULT layout= MY_TYPE count= NB ]
+RW  A <-  (k == 0) ? Block(0, 0): A Task(k - 1)
+      ->  A Task(k + 1)
+
       
-
-
 BODY
 {
-    //printf("Initialising Data of size %d\n", NB);
-
-    double *A_double = (double *) A; 
-    double *B_double = (double *) B;
-
-    for(int j=0; j<NB; j++){
-       *(A_double+j) = 3.14;
-       *(B_double+j) = 3.14;
-
-    }
+    parsec_matrix_block_cyclic_t* Adata = (parsec_matrix_block_cyclic_t *)A;
   
-}
-END
-
-TaskNode0(k, m)
-
-k = 1 .. 192 
-m = 1 .. LEVEL
-
-:dcA(0, 0)
-
-RW  A <- (m == 1) ? A Start(0) : A TaskNode0(k, m-1 )
-      -> (m <= LEVEL) ? A TaskNode0( k, m+1)
-RW  B <- (m == 1) ? B Start(0) : B TaskNode0(k, m-1 )
-      -> (m <= LEVEL) ? B TaskNode0( k, m+1)
-     
-BODY
-{
-    
-
-    int  rank = 0;
-    int SIZE = 10E1;
-    int i = 0;
-    double *A, *B, *AB;
-
-    A = (double *) malloc( SIZE * SIZE * sizeof(double));
-    B = (double *) malloc( SIZE * SIZE * sizeof(double));
-    AB = (double *) malloc( SIZE * SIZE * sizeof(double));
-    memset(A, 3.14, SIZE * SIZE);
-    memset(B, 3.14, SIZE * SIZE);
-
-    for(i=0; i<256; i++)
-    { 
-        cblas_dgemm(    CblasRowMajor,
-                    CblasNoTrans,
-                    CblasNoTrans,
-                    SIZE, SIZE, SIZE, 1.0, 
-                    A, SIZE,
-                    B, SIZE,
-                    2.0,
-                    AB, SIZE
-               );
-        
-   }
-    free(A);
-    free(B);
-    free(AB);
-    
-
-    #if defined(PARSEC_HAVE_MPI)
-    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-#endif  /* defined(PARSEC_HAVE_MPI) */
-
-    //printf("\n I am Task(%d) on %d\n", k, rank);
-  
-}
-END
-
-TaskNode1(k, m)
-
-k = 1 .. 192 
-m = 1 .. LEVEL
-
-:dcA(1, 0)
-
-RW  A <- (m == 1) ? A Start(1) : A TaskNode1(k, m-1 )
-      -> (m <= LEVEL) ? A TaskNode1( k, m+1)
-RW  B <- (m == 1) ? B Start(1) : B TaskNode1(k, m-1 )
-      -> (m <= LEVEL) ? B TaskNode1( k, m+1)
-     
-BODY
-{
-    
-
-    int  rank = 0;
-    int SIZE = 10E1;
-    int i = 0;
-    double *A, *B, *AB;
-
-    A = (double *) malloc( SIZE * SIZE * sizeof(double));
-    B = (double *) malloc( SIZE * SIZE * sizeof(double));
-    AB = (double *) malloc( SIZE * SIZE * sizeof(double));
-    memset(A, 3.14, SIZE * SIZE);
-    memset(B, 3.14, SIZE * SIZE);
-
-    for(i=0; i<256; i++)
-    { 
-        cblas_dgemm(    CblasRowMajor,
-                    CblasNoTrans,
-                    CblasNoTrans,
-                    SIZE, SIZE, SIZE, 1.0, 
-                    A, SIZE,
-                    B, SIZE,
-                    2.0,
-                    AB, SIZE
-               );
-        
-   }
-    free(A);
-    free(B);
-    free(AB);
-    
-
-    #if defined(PARSEC_HAVE_MPI)
-    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-#endif  /* defined(PARSEC_HAVE_MPI) */
-
-    //printf("\n I am Task(%d) on %d\n", k, rank);
-  
+    for( int i = 0; i < block_size; i++)
+        ((int*)Adata->mat)[i] += 1;
 }
 END
 
 
 extern "C" %{ 
 
-
+#define TYPE  PARSEC_MATRIX_INTEGER
+static parsec_matrix_block_cyclic_t descA;
 
 int main(int argc, char *argv[])
 {
-    parsec_context_t* parsec;
-    int rc;
-    int rank, world;
-    parsec_tiled_matrix_dc_t *dcA;
-    parsec_tiled_matrix_dc_t *dcB;
-    parsec_Bal_LDSG_taskpool_t *tp;
+    parsec_cache_taskpool_t* tp;
+    parsec_context_t *parsec;
+    int block_size = 10, N = 10, rc, world, rank;
+    
+
 
 #if defined(PARSEC_HAVE_MPI)
     {
@@ -195,10 +68,8 @@ int main(int argc, char *argv[])
     rank = 0;
 #endif
 
-    int nb = atoi(argv[1]);
-    int nt = atoi(argv[2]);
-    int level = atoi(argv[3]);
-    int worker_threads = atoi(argv[3]);
+    block_size = atoi(argv[1]);
+    int worker_threads = atoi(argv[2]);
 
     parsec = parsec_init(worker_threads, &argc, &argv);
 
@@ -206,45 +77,50 @@ int main(int argc, char *argv[])
      * initialise the matrix
      */
 
-    dcA = create_and_distribute_data(rank, world, nb, nt, sizeof(double));
-    parsec_data_collection_set_key((parsec_data_collection_t *)dcA, "A");
-    dcB = create_and_distribute_data(rank, world, nb, nt, sizeof(double));
-    parsec_data_collection_set_key((parsec_data_collection_t *)dcB, "B");
+     parsec_matrix_block_cyclic_init( &descA, TYPE, PARSEC_MATRIX_TILE,
+                               0 /*rank*/,
+                               block_size, 1, /* Tile size */
+                               1, 1,     /* Global matrix size (what is stored)*/
+                               0, 0,     /* Staring point in the global matrix */
+                               1, 1,     /* Submatrix size (the one concerned by the computation */
+                               1, 1,     /* process process grid */
+                               1, 1,     /* k-cyclicity */
+                               0, 0);    /* starting point on the process grid */
 
-    tp = parsec_Bal_LDSG_new(dcA, dcB, nb, nt, level);
+    descA.mat = parsec_data_allocate( block_size * parsec_datadist_getsizeoftype(TYPE) );
+    for( int i = 0; i < block_size; ((int*)descA.mat)[i++] = 1);
+    
+
+    tp = parsec_cache_new( (parsec_data_collection_t*) &descA, block_size, N);
+    tp = parsec_cache_new( (parsec_data_collection_t*)&descA, block_size, N );
 
     /**
      * The arena is now also used to describe the layout to the communication
      * engine (MPI)
      */
     
-    parsec_arena_datatype_construct( &tp->arenas_datatypes[PARSEC_Bal_LDSG_DEFAULT_ARENA],
-                                     nb*sizeof(double), PARSEC_ARENA_ALIGNMENT_SSE,
-                                     parsec_datatype_double_t );
+    parsec_arena_datatype_construct( &tp->arenas_datatypes[PARSEC_cache_DEFAULT_ADT_IDX],
+                                     descA.super.mb * descA.super.nb * parsec_datadist_getsizeoftype(TYPE),
+                                     PARSEC_ARENA_ALIGNMENT_SSE,
+                                     PARSEC_DATATYPE_NULL);  /* change for distributed cases */
 
     rc = parsec_context_add_taskpool( parsec, (parsec_taskpool_t*)tp );
 
-    parsec_migrate_init(parsec, tp);
-
-    PARSEC_CHECK_ERROR(rc, "parsec_context_add_taskpool");
-    rc = parsec_context_start(parsec);
+   rc = parsec_context_start(parsec);
     PARSEC_CHECK_ERROR(rc, "parsec_context_start");
+
+    rc = parsec_context_add_taskpool( parsec, (parsec_taskpool_t*)tp);
+    PARSEC_CHECK_ERROR(rc, "parsec_context_add_taskpool");
+
     rc = parsec_context_wait(parsec);
     PARSEC_CHECK_ERROR(rc, "parsec_context_wait");
 
-    parsec_migrate_fini(parsec);
+    free(descA.mat);
 
-    parsec_taskpool_free((parsec_taskpool_t*)tp);
-
-    /**
-     * Cleanup the descriptor
-     */
-    free_data(dcA);
-
-    parsec_fini(&parsec);
-#if defined(PARSEC_HAVE_MPI)
+#ifdef PARSEC_HAVE_MPI
     MPI_Finalize();
 #endif
+    return 0;
 
     return 0;
 }
