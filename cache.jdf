@@ -1,0 +1,252 @@
+extern "C" %{
+
+/**
+ * This example shows how to distribute the tasks over different nodes
+ *    descriptor as global
+ *    rank_of() / possibility of playing with value in rank_of
+ */
+
+#include "parsec.h" 
+#include <math.h>
+#include <unistd.h>
+#include<stdlib.h>
+#include<string.h>
+#include "parsec/data_dist/matrix/matrix.h"
+#include "cblas.h"
+//#include "mkl.h"
+#include "bal_data.h"
+
+#define MY_TYPE parsec_datatype_double_t
+
+%} 
+
+/**
+ * Data descriptor used in the jdf can be declared manually as global to fix the
+ * parameters order of the _New function
+ */
+
+
+dcA      [type = "parsec_tiled_matrix_dc_t*"]
+dcB      [type = "parsec_tiled_matrix_dc_t*"]
+NB       [type = int]
+NT       [type = int]
+LEVEL    [type = int]
+
+Start(k)
+
+k = 0..NT-1
+
+:dcA(k, 0)
+
+RW  A <-  dcA(k,0)
+      ->  (k == 0) ? A TaskNode0( 1..192, 1) : A TaskNode1( 1..192, 1) [ type= DEFAULT layout= MY_TYPE count= NB ]
+RW  B <-  dcB(k,0)
+      ->  (k == 0) ? B TaskNode0( 1..192, 1) : B TaskNode1( 1..192, 1) [ type= DEFAULT layout= MY_TYPE count= NB ]
+      
+
+
+BODY
+{
+    //printf("Initialising Data of size %d\n", NB);
+
+    double *A_double = (double *) A; 
+    double *B_double = (double *) B;
+
+    for(int j=0; j<NB; j++){
+       *(A_double+j) = 3.14;
+       *(B_double+j) = 3.14;
+
+    }
+  
+}
+END
+
+TaskNode0(k, m)
+
+k = 1 .. 192 
+m = 1 .. LEVEL
+
+:dcA(0, 0)
+
+RW  A <- (m == 1) ? A Start(0) : A TaskNode0(k, m-1 )
+      -> (m <= LEVEL) ? A TaskNode0( k, m+1)
+RW  B <- (m == 1) ? B Start(0) : B TaskNode0(k, m-1 )
+      -> (m <= LEVEL) ? B TaskNode0( k, m+1)
+     
+BODY
+{
+    
+
+    int  rank = 0;
+    int SIZE = 10E1;
+    int i = 0;
+    double *A, *B, *AB;
+
+    A = (double *) malloc( SIZE * SIZE * sizeof(double));
+    B = (double *) malloc( SIZE * SIZE * sizeof(double));
+    AB = (double *) malloc( SIZE * SIZE * sizeof(double));
+    memset(A, 3.14, SIZE * SIZE);
+    memset(B, 3.14, SIZE * SIZE);
+
+    for(i=0; i<256; i++)
+    { 
+        cblas_dgemm(    CblasRowMajor,
+                    CblasNoTrans,
+                    CblasNoTrans,
+                    SIZE, SIZE, SIZE, 1.0, 
+                    A, SIZE,
+                    B, SIZE,
+                    2.0,
+                    AB, SIZE
+               );
+        
+   }
+    free(A);
+    free(B);
+    free(AB);
+    
+
+    #if defined(PARSEC_HAVE_MPI)
+    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+#endif  /* defined(PARSEC_HAVE_MPI) */
+
+    //printf("\n I am Task(%d) on %d\n", k, rank);
+  
+}
+END
+
+TaskNode1(k, m)
+
+k = 1 .. 192 
+m = 1 .. LEVEL
+
+:dcA(1, 0)
+
+RW  A <- (m == 1) ? A Start(1) : A TaskNode1(k, m-1 )
+      -> (m <= LEVEL) ? A TaskNode1( k, m+1)
+RW  B <- (m == 1) ? B Start(1) : B TaskNode1(k, m-1 )
+      -> (m <= LEVEL) ? B TaskNode1( k, m+1)
+     
+BODY
+{
+    
+
+    int  rank = 0;
+    int SIZE = 10E1;
+    int i = 0;
+    double *A, *B, *AB;
+
+    A = (double *) malloc( SIZE * SIZE * sizeof(double));
+    B = (double *) malloc( SIZE * SIZE * sizeof(double));
+    AB = (double *) malloc( SIZE * SIZE * sizeof(double));
+    memset(A, 3.14, SIZE * SIZE);
+    memset(B, 3.14, SIZE * SIZE);
+
+    for(i=0; i<256; i++)
+    { 
+        cblas_dgemm(    CblasRowMajor,
+                    CblasNoTrans,
+                    CblasNoTrans,
+                    SIZE, SIZE, SIZE, 1.0, 
+                    A, SIZE,
+                    B, SIZE,
+                    2.0,
+                    AB, SIZE
+               );
+        
+   }
+    free(A);
+    free(B);
+    free(AB);
+    
+
+    #if defined(PARSEC_HAVE_MPI)
+    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+#endif  /* defined(PARSEC_HAVE_MPI) */
+
+    //printf("\n I am Task(%d) on %d\n", k, rank);
+  
+}
+END
+
+
+extern "C" %{ 
+
+
+
+int main(int argc, char *argv[])
+{
+    parsec_context_t* parsec;
+    int rc;
+    int rank, world;
+    parsec_tiled_matrix_dc_t *dcA;
+    parsec_tiled_matrix_dc_t *dcB;
+    parsec_Bal_LDSG_taskpool_t *tp;
+
+#if defined(PARSEC_HAVE_MPI)
+    {
+        int provided;
+        MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+    }
+    MPI_Comm_size(MPI_COMM_WORLD, &world);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#else
+    world = 1;
+    rank = 0;
+#endif
+
+    int nb = atoi(argv[1]);
+    int nt = atoi(argv[2]);
+    int level = atoi(argv[3]);
+    int worker_threads = atoi(argv[3]);
+
+    parsec = parsec_init(worker_threads, &argc, &argv);
+
+    /**
+     * initialise the matrix
+     */
+
+    dcA = create_and_distribute_data(rank, world, nb, nt, sizeof(double));
+    parsec_data_collection_set_key((parsec_data_collection_t *)dcA, "A");
+    dcB = create_and_distribute_data(rank, world, nb, nt, sizeof(double));
+    parsec_data_collection_set_key((parsec_data_collection_t *)dcB, "B");
+
+    tp = parsec_Bal_LDSG_new(dcA, dcB, nb, nt, level);
+
+    /**
+     * The arena is now also used to describe the layout to the communication
+     * engine (MPI)
+     */
+    
+    parsec_arena_datatype_construct( &tp->arenas_datatypes[PARSEC_Bal_LDSG_DEFAULT_ARENA],
+                                     nb*sizeof(double), PARSEC_ARENA_ALIGNMENT_SSE,
+                                     parsec_datatype_double_t );
+
+    rc = parsec_context_add_taskpool( parsec, (parsec_taskpool_t*)tp );
+
+    parsec_migrate_init(parsec, tp);
+
+    PARSEC_CHECK_ERROR(rc, "parsec_context_add_taskpool");
+    rc = parsec_context_start(parsec);
+    PARSEC_CHECK_ERROR(rc, "parsec_context_start");
+    rc = parsec_context_wait(parsec);
+    PARSEC_CHECK_ERROR(rc, "parsec_context_wait");
+
+    parsec_migrate_fini(parsec);
+
+    parsec_taskpool_free((parsec_taskpool_t*)tp);
+
+    /**
+     * Cleanup the descriptor
+     */
+    free_data(dcA);
+
+    parsec_fini(&parsec);
+#if defined(PARSEC_HAVE_MPI)
+    MPI_Finalize();
+#endif
+
+    return 0;
+}
+
+%}
