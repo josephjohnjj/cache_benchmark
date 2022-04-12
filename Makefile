@@ -1,13 +1,13 @@
-PARSEC_DIR = /home/joseph/parsec/build/install
+PARSEC_DIR = /home/mannaparambil/parsec/build/install
 PTG = $(PARSEC_DIR)/bin/parsec-ptgpp
 CC = mpicc
 CFLAGS = -g 
-LDFLAGS = -lm 
-INCS = -I. -I$(PARSEC_DIR)/include/
-LIBS = -L$(PARSEC_DIR)/lib -lparsec #-L/usr/lib/x86_64-linux-gnu/ -lblas 
+LDFLAGS = -lm -fpic
+INCS = -I. -I$(PARSEC_DIR)/include/ -I/usr/local/cuda/include
+LIBS = -L$(PARSEC_DIR)/lib64 -lparsec -Wl,-rpath=$(PARSEC_DIR)/lib64  #-L/usr/lib/x86_64-linux-gnu/ -lblas 
 
 JDFFILES = \
-	cache
+	cache \
 
 CFILES = \
 
@@ -27,6 +27,9 @@ all: $(CFILES_OFILES)  $(JDFFILES) $(JDFFILES_CFILES) $(JDFFILES_OFILES) $(JDFFI
 
 cache : cache.o
 	$(CC)  cache.o -o cache $(LIBS) $(LDFLAGS)
+
+cache_bench : cache_bench.o
+	$(CC)  cache_bench.o -o cache_bench $(LIBS) $(LDFLAGS)
 
 
 

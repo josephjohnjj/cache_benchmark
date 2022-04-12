@@ -1,10 +1,5 @@
 extern "C" %{
 
-/**
- * This example shows how to distribute the tasks over different nodes
- *    descriptor as global
- *    rank_of() / possibility of playing with value in rank_of
- */
 
 #include "parsec.h" 
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
@@ -13,11 +8,6 @@ extern "C" %{
 
 %} 
 
-/**
- * Data descriptor used in the jdf can be declared manually as global to fix the
- * parameters order of the _New function
- */
-
 
 Block      [type = "parsec_data_collection_t*"]
 block_size [type = int]  
@@ -25,20 +15,21 @@ N          [type = int]
 
 Task(k)
 
-k = 0..N
+k = 0..0
 
 :Block(0, 0)
 
-RW  A <-  (k == 0) ? Block(0, 0): A Task(k - 1)
-      ->  A Task(k + 1)
+RW  A <- (k == 0) ? Block(0, 0) : A Task( k-1 )
+      -> (k < N) ? A Task( k+1 )
 
       
 BODY
 {
-    parsec_matrix_block_cyclic_t* Adata = (parsec_matrix_block_cyclic_t *)A;
+    //parsec_matrix_block_cyclic_t* Adata = (parsec_matrix_block_cyclic_t *)A;
+    printf(" Task %d \n", k );
   
-    for( int i = 0; i < block_size; i++)
-        ((int*)Adata->mat)[i] += 1;
+    //for( int i = 0; i < block_size; i++)
+    //    ((int*)Adata->mat)[i] += 1;
 }
 END
 
@@ -46,13 +37,13 @@ END
 extern "C" %{ 
 
 #define TYPE  PARSEC_MATRIX_INTEGER
-static parsec_matrix_block_cyclic_t descA;
 
 int main(int argc, char *argv[])
 {
     parsec_cache_taskpool_t* tp;
     parsec_context_t *parsec;
-    int block_size = 10, N = 10, rc, world, rank;
+    int block_size = 10, N = 1, rc, world, rank;
+    parsec_matrix_block_cyclic_t descA;
     
 
 
@@ -71,42 +62,34 @@ int main(int argc, char *argv[])
     block_size = atoi(argv[1]);
     int worker_threads = atoi(argv[2]);
 
+    printf("Block size = %d worker threads = %d world %d \n", block_size, worker_threads, world);
+
     parsec = parsec_init(worker_threads, &argc, &argv);
 
-    /**
-     * initialise the matrix
-     */
-
-     parsec_matrix_block_cyclic_init( &descA, TYPE, PARSEC_MATRIX_TILE,
-                               0 /*rank*/,
-                               block_size, 1, /* Tile size */
-                               1, 1,     /* Global matrix size (what is stored)*/
-                               0, 0,     /* Staring point in the global matrix */
-                               1, 1,     /* Submatrix size (the one concerned by the computation */
-                               1, 1,     /* process process grid */
-                               1, 1,     /* k-cyclicity */
-                               0, 0);    /* starting point on the process grid */
+    parsec_matrix_block_cyclic_init( &descA, TYPE, PARSEC_MATRIX_TILE,
+                               0,		/* rank */
+                               block_size, 1, 	/* Tile size */
+                               block_size, 1,   /* Global matrix size (what is stored)*/
+                               0, 0,     	/* Staring point in the global matrix */
+                               block_size, 1,   /* Submatrix size (the one concerned by the computation */
+                               world, 1,     	/* process process grid */
+                               1, 1,     	/* k-cyclicity */
+                               0, 0);    	/* starting point on the process grid */
 
     descA.mat = parsec_data_allocate( block_size * parsec_datadist_getsizeoftype(TYPE) );
-    for( int i = 0; i < block_size; ((int*)descA.mat)[i++] = 1);
+    //for( int i = 0; i < block_size; ((int*)descA.mat)[i++] = 1);
     
 
     tp = parsec_cache_new( (parsec_data_collection_t*) &descA, block_size, N);
-    tp = parsec_cache_new( (parsec_data_collection_t*)&descA, block_size, N );
 
-    /**
-     * The arena is now also used to describe the layout to the communication
-     * engine (MPI)
-     */
-    
     parsec_arena_datatype_construct( &tp->arenas_datatypes[PARSEC_cache_DEFAULT_ADT_IDX],
-                                     descA.super.mb * descA.super.nb * parsec_datadist_getsizeoftype(TYPE),
+                                     block_size * parsec_datadist_getsizeoftype(TYPE),
                                      PARSEC_ARENA_ALIGNMENT_SSE,
                                      PARSEC_DATATYPE_NULL);  /* change for distributed cases */
 
     rc = parsec_context_add_taskpool( parsec, (parsec_taskpool_t*)tp );
 
-   rc = parsec_context_start(parsec);
+    rc = parsec_context_start(parsec);
     PARSEC_CHECK_ERROR(rc, "parsec_context_start");
 
     rc = parsec_context_add_taskpool( parsec, (parsec_taskpool_t*)tp);
@@ -120,8 +103,6 @@ int main(int argc, char *argv[])
 #ifdef PARSEC_HAVE_MPI
     MPI_Finalize();
 #endif
-    return 0;
-
     return 0;
 }
 
